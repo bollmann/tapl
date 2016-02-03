@@ -1,8 +1,11 @@
 module LambdaTest where
 
+import Data.List as List
+import Data.Maybe
 import qualified Data.Map as Map
 import Control.Monad
-import Test.HUnit
+import Test.HUnit hiding (Testable)
+import Test.QuickCheck
 
 import Lambda
 
@@ -16,10 +19,10 @@ substTests = TestList
     t1' = Lam "x_1". Lam "y_1". Lam "z" $ App (Var "x_1") (Var "y_1")
     t2' = Lam "s_1". Lam "z" $ App (Var "s_1") (App (Var "s_1") (Var "z"))
 
-renameVars :: [(String, String)] -> Term String -> Term String
+renameVars :: [(String, String)] -> Term -> Term
 renameVars vars t = foldr renameVar t vars
 
-renameVar :: (String, String) -> Term String -> Term String
+renameVar :: (String, String) -> Term -> Term
 renameVar (x,y) (Var z)
   | z == x    = (Var y)
   | otherwise = (Var z)
@@ -46,6 +49,36 @@ removeRestoreNamesTest = TestList
     nplus = LamN. LamN. LamN. LamN $
       AppN (VarN 3) (VarN 1) `AppN` (AppN (VarN 2) (VarN 1) `AppN` (VarN 0))
     ctxt  = Map.empty
+
+newtype Var = MkVar { unVar :: String } deriving (Show)
+
+instance Arbitrary Var where
+  arbitrary = (MkVar . (:[])) <$> elements ['a'..'z']
+
+instance Arbitrary Term where
+  arbitrary = sized arbTerm
+
+arbTerm :: Int -> Gen Term
+arbTerm size
+  | size <= 1 = Var <$> varName
+  | otherwise = frequency
+      [ (1, Var <$> varName)
+      , (2, Lam <$> varName <*> arbTerm (size-1))
+      , (3, App <$> arbTerm (size `div` 2) <*> arbTerm (size `div` 2))
+      ]
+  where varName = (:[]) <$> elements ['a'..'z']
+
+-- | A quickcheck 'proof' for problem 6.2.8, saying that 'subst' and
+-- 'substN' commute wrt to removeNames.
+prop_subst_substN_equiv :: Var -> Term -> Term -> Property
+prop_subst_substN_equiv x s t =
+  unVar x `elem` free t ==>
+    removeNames ctxt (subst y s t) ==
+    substN j (removeNames ctxt s) (removeNames ctxt t)
+  where
+    freeVars = nub $ free t ++ free s
+    ctxt     = Map.fromList $ freeVars `zip` (map (:[]) [0,1..])
+    (y, j)   = (unVar x, List.head . fromJust $ Map.lookup y ctxt)
 
 main :: IO ()
 main = void . runTestTT $ TestList
