@@ -146,29 +146,19 @@ sumlists = fix ** (λ "f". λ "l" $
 
 {- Evaluation: -}
 
-reduce :: Term -> Maybe (Term)
-reduce (Var x)    = Nothing
-reduce (Lam x t') = Nothing 
-reduce (App t1 t2)
-  | (Lam x t') <- t1, value t2 = Just (subst x t2 t')
-  | (Lam x t') <- t1           = App t1 <$> reduce t2
-  | otherwise                  = App <$> reduce t1 <*> pure t2
-  where
-    value (Lam _ _) = True
-    value (Var _)   = True -- for testing!
-    value _         = False
-
+-- | Extract the free variables of a λ-term
 free :: Term -> [String]
 free (Var x)     = [x]
 free (App t1 t2) = nub $ free t1 ++ free t2
 free (Lam x t1)  = nub $ delete x (free t1)
 
-type VarSupply a = State [String] String
-
+-- | Generate a fresh variable name wrt to the used variables 'var'.
 fresh :: [String] -> String -> String
 fresh vars prefix = P.head $ names \\ (nub vars)
   where names = [ prefix ++ "_" ++ show k | k <- [1..]]
 
+-- | Substitutes all free occurrences of variable x with s in termn t.
+-- | That is, implements what one would expect when writing [x |-> s]t.
 subst :: String -> Term -> Term -> Term
 subst x s t = evalState (mkSubst x s t) (nub (x:free s))
 
@@ -191,7 +181,21 @@ mkSubst x s (Lam y t1)
   | otherwise = do
       modify (y:)
       Lam y <$> mkSubst x s t1
-      
+
+-- | Small-Step call-by-value reduction relation.
+reduce :: Term -> Maybe (Term)
+reduce (Var x)    = Nothing
+reduce (Lam x t') = Nothing 
+reduce (App t1 t2)
+  | (Lam x t') <- t1, value t2 = Just (subst x t2 t')
+  | (Lam x t') <- t1           = App t1 <$> reduce t2
+  | otherwise                  = App <$> reduce t1 <*> pure t2
+  where
+    value (Lam _ _) = True
+    value _         = False
+
+-- | Multi-Step call-by-value evaluation which is induced by reduce
+-- (i.e., reduce's reflexive, transitive closure).
 eval :: Term -> Term
 eval t = step t (reduce t)
   where
@@ -208,7 +212,7 @@ data TermN
 
 type Context = Map String [Int]
 
--- | Convert a standard λ-program into nameless λ-program
+-- | Convert a standard λ-program into a nameless λ-program
 removeNames :: Map String [Int] -> Term -> TermN
 removeNames context t = evalState (remove t) context
   where
@@ -267,3 +271,5 @@ substN :: Int -> TermN -> TermN -> TermN
 substN j s (VarN k) | j == k = s | otherwise = (VarN k)
 substN j s (AppN t1 t2) = AppN (substN j s t1) (substN j s t2)
 substN j s (LamN t1)    = LamN (substN (j+1) (shift 1 s) t1)
+
+-- TODO: also define reduceN for nameless terms wrt. substN!
