@@ -50,6 +50,9 @@ removeRestoreNamesTest = TestList
       AppN (VarN 3) (VarN 1) `AppN` (AppN (VarN 2) (VarN 1) `AppN` (VarN 0))
     ctxt  = Map.empty
 
+{- In the following we formalize that subst and substN agree with each
+other (as in problem 6.2.8) by means of a quickcheck property -}
+
 newtype Var = MkVar { unVar :: String } deriving (Show)
 
 instance Arbitrary Var where

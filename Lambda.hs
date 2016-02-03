@@ -89,6 +89,7 @@ prd = Lam "m" $ fst `App` (Var "m" `App` ss `App` zz)
     ss = Lam "p" $ pair `App` (snd `App` Var "p")
                         `App` (scc `App` (snd `App` Var "p"))
 
+
 -- from now on we'll use the following more convenient notation for
 -- specyfing programs in the lambda calculus:
 
@@ -105,6 +106,8 @@ sequence [valD (varP (mkName x)) (normalB [| Var x |]) []
          | x <- map (:[]) ['a'..'z']]
 
 -- using the above notation, we can write λ-programs more succinctly:
+
+{- more Numbers: -}
 
 iszro, equal :: Term
 iszro = λ "m" $ m ** (λ "x" fls) ** tru
@@ -130,12 +133,12 @@ tail  = λ "l" $ fst ** (l ** cc ** nn)
         cc = λ "h". λ "p" $ pair ** (snd ** p)
                                  ** (cons ** h ** (snd ** p))
 
-{- Recursion using (call-by-value) Fixpoints -}
+{- Recursion using call-by-value fixpoints -}
 
 fix = λ "f" $ h ** h
   where h = (λ "x" $ f ** (λ "y" $ x ** x ** y))
 
--- summing lists of lists of naturals:
+-- Example: summing lists of lists of naturals:
 sumlists = fix ** (λ "f". λ "l" $
   test ** (isnil ** l)
        ** (λ "n" $  n)
@@ -157,7 +160,7 @@ fresh :: [String] -> String -> String
 fresh vars prefix = P.head $ names \\ (nub vars)
   where names = [ prefix ++ "_" ++ show k | k <- [1..]]
 
--- | Substitutes all free occurrences of variable x with s in termn t.
+-- | Substitutes all free occurrences of variable x in term t with s.
 -- | That is, implements what one would expect when writing [x |-> s]t.
 subst :: String -> Term -> Term -> Term
 subst x s t = evalState (mkSubst x s t) (nub (x:free s))
@@ -259,6 +262,7 @@ restoreNames context nt = evalState (restore nt) context
     pushIncr x = Map.insert 0 x . Map.mapKeysMonotonic (+1)
     popDecr  x = Map.delete 0 . Map.mapKeysMonotonic (\n -> n-1)
 
+-- | Shifts all free variables in a term by d positions upwards.
 shift :: Int -> TermN -> TermN
 shift d = shiftAbove 0 where
   shiftAbove c (VarN k)
@@ -267,6 +271,7 @@ shift d = shiftAbove 0 where
   shiftAbove c (AppN t1 t2) = AppN (shiftAbove c t1) (shiftAbove c t2)
   shiftAbove c (LamN t1)    = LamN (shiftAbove (c+1) t1)
 
+-- | Substitution on nameless terms
 substN :: Int -> TermN -> TermN -> TermN
 substN j s (VarN k) | j == k = s | otherwise = (VarN k)
 substN j s (AppN t1 t2) = AppN (substN j s t1) (substN j s t2)
