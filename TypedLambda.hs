@@ -1,4 +1,5 @@
 {-| A Haskell implementation of the PCF-style simply typed λ-calculus. -}
+
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE GADTs #-}
 
@@ -20,37 +21,46 @@ data Type
   | Type :->: Type
   deriving (Eq, Show)
 
+data Value
+  = Num Nat
+  | Func String Type Term
+
 data Term where
-  Num  :: Nat -> Term
   Zero :: Term
   Pred :: Term -> Term
   Succ :: Term -> Term
+  Ifz  :: Term -> Term -> Term -> Term
   Var  :: String -> Term
   Lam  :: String -> Type -> Term -> Term
   App  :: Term -> Term -> Term
-  Ifz  :: Term -> Term -> Term -> Term
   Let  :: String -> Term -> Term -> Term
   Fix  :: Term -> Term
   deriving (Eq, Show)
 
 value :: Term -> Bool
 value (Lam _ _ _) = True
-value (Num _)     = True
-value _           = False
+value t           = number t 
+
+number :: Term -> Bool
+number Zero      = True
+number (Succ t1) = number t1
+number _         = False
 
 {- Evaluation -}
 
 -- | Small-Step call-by-value reduction relation.
 reduce :: Term -> Maybe Term
-reduce (Num _)        = Nothing
-reduce Zero           = Just (Num Z)
+reduce Zero           = Nothing
 reduce (Pred t1)
-  | Num Z     <- t1   = Just (Num Z)
-  | Num (S n) <- t1   = Just (Num n)
+  | Succ nv   <- t1
+  , number nv         = Just nv
   | otherwise         = Pred <$> reduce t1
-reduce (Succ t1)
-  | Num n <- t1       = Just (Num (S n))
-  | otherwise         = Succ <$> reduce t1
+reduce (Succ t1)      = Succ <$> reduce t1
+reduce (Ifz t1 t2 t3)
+  | Zero    <- t1     = Just t2
+  | Succ nv <- t1
+  , number nv         = Just t3
+  | otherwise         = Ifz <$> reduce t1 <*> pure t2 <*> pure t3
 reduce (Var _)        = Nothing
 reduce (Lam _ _ _)    = Nothing 
 reduce (App t1 t2)
@@ -58,10 +68,6 @@ reduce (App t1 t2)
   , value t2          = Just (subst x t2 t')
   | Lam _ _ _  <- t1  = App t1 <$> reduce t2
   | otherwise         = App <$> reduce t1 <*> pure t2
-reduce (Ifz t1 t2 t3)
-  | Num Z     <- t1   = Just t2
-  | Num (S _) <- t1   = Just t3
-  | otherwise         = Ifz <$> reduce t1 <*> pure t2 <*> pure t3
 reduce (Let x t1 t2)
   | value t1          = Just (subst x t1 t2)
   | otherwise         = Let x <$> reduce t1 <*> pure t2
@@ -83,10 +89,14 @@ subst :: String -> Term -> Term -> Term
 subst x s t = evalState (mkSubst x s t) (nub (x:free s))
 
 mkSubst :: String -> Term -> Term -> State [String] Term
-mkSubst _ _ (Num n)  = return (Num n)
 mkSubst _ _ Zero     = return Zero
 mkSubst x s (Succ t1) = Succ <$> mkSubst x s t1
 mkSubst x s (Pred t1) = Pred <$> mkSubst x s t1
+mkSubst x s (Ifz t1 t2 t3) = do
+  t1' <- mkSubst x s t1
+  t2' <- mkSubst x s t2
+  t3' <- mkSubst x s t3
+  return (Ifz t1' t2' t3')
 mkSubst x s (Var y)
   | y == x    = return s
   | otherwise = return (Var y)
@@ -100,12 +110,7 @@ mkSubst x s (Lam y ty t1)
   | otherwise = do
       modify (y:)
       Lam y ty <$> mkSubst x s t1
-mkSubst x s (Ifz t1 t2 t3) = do
-  t1' <- mkSubst x s t1
-  t2' <- mkSubst x s t2
-  t3' <- mkSubst x s t3
-  return (Ifz t1' t2' t3')
-mkSubst x s (Let y t1 t2)  = do
+mkSubst x s (Let y t1 t2) = do
   t1' <- mkSubst x s t1
   if y == x || y `elem` free s
     then do
@@ -117,22 +122,19 @@ mkSubst x s (Let y t1 t2)  = do
       t2' <- mkSubst x s t2
       modify (y:)
       return (Let y t1' t2')
-mkSubst x s (Fix t1)       = Fix <$> mkSubst x s t1 
+mkSubst x s (Fix t1) = Fix <$> mkSubst x s t1 
 
 -- | Extracts the free variables of a λ-term
 free :: Term -> [String]
-free (Num _)        = []
 free Zero           = []
 free (Pred t1)      = free t1
 free (Succ t1)      = free t1
+free (Ifz t1 t2 t3) = nub $ free t1 ++ free t2 ++ free t3
 free (Var x)        = [x]
 free (Lam x _ t1)   = nub $ delete x (free t1)
 free (App t1 t2)    = nub $ free t1 ++ free t2
-free (Ifz t1 t2 t3) = nub $ concatMap free [t1, t2, t3]
 free (Let x t1 t2)  = nub $ free t1 ++ (delete x (free t2))
-  -- NOTE: x is allowed to occur free in t1 (since we don't have
-  -- recursive lets).
-free (Fix t1)    = nub $ free t1
+free (Fix t1)       = nub $ free t1
 
 -- | Generate a fresh variable name wrt to the used variables 'var'.
 fresh :: String -> State [String] String
@@ -161,7 +163,6 @@ typeOf t = typeof Map.empty t
 -- | Typechecks the given term wrt the given typing environment and
 -- returns the term's type, if any.
 typeof :: Context -> Term -> Either TypeError Type
-typeof _   (Num _)   = return NatT
 typeof _   Zero      = return NatT
 typeof cxt (Succ t1) = do
   ty1 <- typeof cxt t1

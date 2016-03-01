@@ -11,8 +11,8 @@ import TypedLambda
 {- Test Programs in PCF, based on exercise 11.11.1 -}
 
 false, true :: Term
-false = Num Z
-true  = Num (S Z)
+false = Zero
+true  = Succ Zero
 
 equal :: Term
 equal = Fix eqf where
@@ -52,35 +52,34 @@ factorial =
                  ((Var "fact") `App` Pred (Var "n"))))
   (Fix (Var "fa"))
 
-toNum :: Int -> Term
-toNum = Num . toNat where
-  toNat n
-    | n < 0     = error "toNum: cannot convert negative numbers!"
-    | n == 0    = Z
-    | otherwise = S (toNat (pred n))
+toNat :: Int -> Term
+toNat n
+  | n < 0     = error "toNat: cannot convert negative numbers!"
+  | n == 0    = Zero
+  | otherwise = Succ (toNat (pred n))
 
 toBool :: Term -> Bool
-toBool (Num Z)     = False
-toBool (Num (S _)) = True
+toBool Zero     = False
+toBool (Succ _) = True
 toBool _ = error "toBool: function is only defined on Num terms"
 
 prop_equal :: NonNegative Int -> NonNegative Int -> Bool
 prop_equal (NonNegative m) (NonNegative n) =
-  toBool (eval $ equal `App` toNum m `App` toNum n) == (m == n)
+  toBool (eval $ equal `App` toNat m `App` toNat n) == (m == n)
 
 prop_plus :: NonNegative Int -> NonNegative Int -> Bool
 prop_plus (NonNegative m) (NonNegative n) =
-  (eval $ plus `App` toNum m `App` toNum n) == toNum (m + n)
+  (eval $ plus `App` toNat m `App` toNat n) == toNat (m + n)
 
 prop_times :: NonNegative Int -> NonNegative Int -> Bool
 prop_times (NonNegative m) (NonNegative n) =
-  (eval $ times `App` toNum m `App` toNum n) == toNum (m * n)
+  (eval $ times `App` toNat m `App` toNat n) == toNat (m * n)
 
--- FIXME: checking this property is *awfully* slow. I think we should
---  rely on using Ints rather than Nats internally for Terms
+-- FIXME: checking this property is *awfully* slow. How can we make it
+-- faster?
 prop_factorial :: Small (NonNegative Int) -> Bool
 prop_factorial (Small (NonNegative n)) =
-  (eval $ factorial `App` toNum n) == toNum (product [1..n])
+  (eval $ factorial `App` toNat n) == toNat (product [1..n])
 
 typeTests :: Test
 typeTests = TestList
@@ -89,5 +88,9 @@ typeTests = TestList
   , typeOf times     ~?= Right (NatT :->: NatT :->: NatT)
   , typeOf factorial ~?= Right (NatT :->: NatT) ]
 
+return []
+
 main :: IO ()
-main = void $ runTestTT $ TestList [ typeTests ]
+main = do
+  void $ runTestTT $ TestList [ typeTests ]
+  void $ $quickCheckAll
