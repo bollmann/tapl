@@ -1,4 +1,4 @@
-module LambdaTest where
+module PureLambdaTest where
 
 import Data.List as List
 import Data.Maybe
@@ -7,7 +7,7 @@ import Control.Monad
 import Test.HUnit hiding (Testable)
 import Test.QuickCheck
 
-import Lambda
+import PureLambda
 
 substTests :: Test
 substTests = TestList

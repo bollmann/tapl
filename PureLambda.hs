@@ -4,7 +4,7 @@
 A Haskell implementation of the pure (untyped) lambda calculus.
 
 -}
-module Lambda where
+module PureLambda where
 
 import Prelude hiding ((**), and, snd, fst, head, tail)
 import qualified Prelude as P (snd, fst, head, tail)
@@ -43,8 +43,9 @@ showTerm ctxtPrec t@(App t1 t2) = showTerm (termPrec t) t1 .
         isApp _         = False
 
 parse :: String -> Term
-parse = undefined -- should we add this to 'compile' concrete
-                  -- λ-programs into their ASTs?
+parse = error "parse: not defined yet"
+  -- TODO: should we add this to 'compile' concrete
+  -- λ-programs into their ASTs?
 
 {- Booleans and test: -}
 
