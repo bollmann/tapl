@@ -5,8 +5,10 @@
 
 module TypedLambda where
 
+import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.State
+import Control.Monad.Writer
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -15,15 +17,12 @@ import qualified Data.Map as Map
 
 data Nat = Z | S Nat deriving (Eq, Show)
 
-infixr :->:
+infixr 7 :->:
 data Type
   = NatT
   | Type :->: Type
-  deriving (Eq, Show)
-
-data Value
-  = Num Nat
-  | Func String Type Term
+  | VarT String             -- an underspecified (i.e., variable) type
+  deriving (Eq, Ord, Show)
 
 data Term where
   Zero :: Term
@@ -39,14 +38,14 @@ data Term where
 
 value :: Term -> Bool
 value (Lam _ _ _) = True
-value t           = number t 
+value t           = number t
 
 number :: Term -> Bool
 number Zero      = True
 number (Succ t1) = number t1
 number _         = False
 
-{- Evaluation -}
+{- Evaluation (Semantics) -}
 
 -- | Small-Step call-by-value reduction relation.
 reduce :: Term -> Maybe Term
@@ -62,7 +61,7 @@ reduce (Ifz t1 t2 t3)
   , number nv         = Just t3
   | otherwise         = Ifz <$> reduce t1 <*> pure t2 <*> pure t3
 reduce (Var _)        = Nothing
-reduce (Lam _ _ _)    = Nothing 
+reduce (Lam _ _ _)    = Nothing
 reduce (App t1 t2)
   | Lam x _ t' <- t1
   , value t2          = Just (subst x t2 t')
@@ -75,12 +74,12 @@ reduce (Fix t1)
   | Lam f _ t' <- t1  = Just (subst f (Fix t1) t')
   | otherwise         = Fix <$> reduce t1
 
--- | Multi-Step call-by-value evaluation which is induced by reduce
--- (i.e., reduce's reflexive, transitive closure).
+-- | Multi-Step call-by-value evaluation induced by reduce (i.e.,
+-- reduce's reflexive and transitive closure).
 eval :: Term -> Term
 eval tm = fix step tm (reduce tm)
   where
-    step _ t Nothing   = t
+    step _    t Nothing   = t
     step cont _ (Just t') = cont t' (reduce t')
 
 -- | Substitutes all free occurrences of variable x in term t with s,
@@ -122,7 +121,7 @@ mkSubst x s (Let y t1 t2) = do
       t2' <- mkSubst x s t2
       modify (y:)
       return (Let y t1' t2')
-mkSubst x s (Fix t1) = Fix <$> mkSubst x s t1 
+mkSubst x s (Fix t1) = Fix <$> mkSubst x s t1
 
 -- | Extracts the free variables of a λ-term
 free :: Term -> [String]
@@ -138,13 +137,12 @@ free (Fix t1)       = nub $ free t1
 
 -- | Generate a fresh variable name wrt to the used variables 'var'.
 fresh :: String -> State [String] String
-fresh prefix = do
-  usedVars <- get
-  let newVar = head $ names \\ usedVars
-  modify (newVar:)
-  return newVar
-  where
-    names = [ prefix ++ "_" ++ show k | k <- ([1..] :: [Integer])]
+fresh prefix
+  = do usedVars <- get
+       let newVar = head $ names \\ usedVars
+       modify (newVar:)
+       return newVar
+  where names = [ prefix ++ "_" ++ show k | k <- ([1..] :: [Integer])]
 
 {- Typechecking -}
 
@@ -204,3 +202,124 @@ typeof cxt (Fix t1) = do
   case tyf of
     (ty1 :->: ty2) | ty1 == ty2 -> return ty1
     _ -> throwError $ TypeMismatch (Fix t1) [(t1, tyf)]
+
+{- Type Inference -}
+
+-- | Extracts all free type variables in a λ-term.
+freeTyVars :: Term -> [String]
+freeTyVars Zero           = []
+freeTyVars (Pred t1)      = nub $ freeTyVars t1
+freeTyVars (Succ t1)      = nub $ freeTyVars t1
+freeTyVars (Ifz t1 t2 t3) = nub $ concat [ freeTyVars t1
+                                         , freeTyVars t2
+                                         , freeTyVars t3 ]
+freeTyVars (Var _)        = []
+freeTyVars (Lam _ ty t1)
+  | VarT tyVar <- ty      = nub $ tyVar : freeTyVars t1
+  | otherwise             = nub $ freeTyVars t1
+freeTyVars (App t1 t2)    = nub $ freeTyVars t1 ++ freeTyVars t2
+freeTyVars (Let _ t1 t2)  = nub $ freeTyVars t1 ++ freeTyVars t2
+freeTyVars (Fix t1)       = nub $ freeTyVars t1
+
+-- | Extracts all free type variables in a typing 'Context'
+freeCxtTyVars :: Context -> [String]
+freeCxtTyVars = concatMap getTyVar . Map.elems
+  where getTyVar (VarT tyVar) = [tyVar]
+        getTyVar _            = []
+
+infixr 6 :~:
+data Constraint = Type :~: Type deriving (Eq, Show)
+type ConstraintCxt a = WriterT [Constraint] (State [String]) a
+
+-- | Derives all the constraints under which the given term is typable
+-- wrt to the given typing context.
+derive :: Context -> Term -> (Type, [Constraint])
+derive cxt t = evalState (runWriterT (deriveConTy cxt t)) usedTyVars
+  where usedTyVars = freeTyVars t ++ freeCxtTyVars cxt
+
+deriveConTy :: Context -> Term -> ConstraintCxt Type
+deriveConTy _ Zero = return NatT
+deriveConTy cxt (Pred t1) = do
+  ty1 <- deriveConTy cxt t1
+  tell [ ty1 :~: NatT ]
+  return NatT
+deriveConTy cxt (Succ t1) = do
+  ty1 <- deriveConTy cxt t1
+  tell [ ty1 :~: NatT ]
+  return NatT
+deriveConTy cxt (Ifz t1 t2 t3) = do
+  ty1 <- deriveConTy cxt t1
+  ty2 <- deriveConTy cxt t2
+  ty3 <- deriveConTy cxt t3
+  tell [ ty1 :~: NatT, ty2 :~: ty3 ]
+  return ty2
+deriveConTy cxt (Var x) = do
+  case Map.lookup x cxt of
+    Nothing -> lift (fresh "X") >>= \ty -> return (VarT ty)
+    Just ty -> return ty
+deriveConTy cxt (Lam x ty t1) = do
+  ty1 <- deriveConTy (Map.insert x ty cxt) t1
+  return (ty :->: ty1)
+deriveConTy cxt (App t1 t2) = do
+  ty1 <- deriveConTy cxt t1
+  ty2 <- deriveConTy cxt t2
+  tyr <- VarT <$> lift (fresh "X")
+  tell [ ty1 :~: ty2 :->: tyr ]
+  return tyr
+deriveConTy cxt (Let x t1 t2) = do
+  ty1 <- deriveConTy cxt t1
+  ty2 <- deriveConTy (Map.insert x ty1 cxt) t2
+  return ty2
+deriveConTy cxt (Fix t1) = do
+  ty1 <- deriveConTy cxt t1
+  ty <- VarT <$> lift (fresh "X")
+  tell [ ty1 :~: ty :->: ty ]
+  return ty
+
+-- | Unifies all the constraints, if possible, yielding a type
+-- substitution.
+unify :: [Constraint] -> Maybe (Map Type Type)
+unify [] = return Map.empty
+unify (ty1 :~: ty2:cs) | ty1 == ty2
+  = unify cs
+unify (ty1@(VarT _) :~: ty2:cs) | not (ty1 `occursIn` ty2)
+  = do sub <- unify (map substConst cs)
+       return $ sub `compose` new
+  where
+    new                   = Map.singleton ty1 ty2
+    substConst (t :~: t') = substTy new t :~: substTy new t'
+unify (ty1 :~: ty2@(VarT _):cs) | not (ty2 `occursIn` ty1)
+  = unify (ty2 :~: ty1 : cs)
+unify (ty1 :->: ty2 :~: ty1' :->: ty2':cs)
+  = unify (ty1 :~: ty1' : ty2 :~: ty2' : cs)
+unify (_:_) = empty
+
+-- | Checks whether the first type (variable) occurs inside of the
+-- second type.
+occursIn :: Type -> Type -> Bool
+occursIn ty1 NatT           = ty1 == NatT
+occursIn ty1 ty2@(VarT _)   = ty1 == ty2
+occursIn ty1 (tya :->: tyr) = ty1 `occursIn` tya || ty1 `occursIn` tyr
+
+-- | Extends a given type substitution by another type to type mapping.
+extend :: Type -> Type -> Map Type Type -> Map Type Type
+extend ty1 ty2 sub = sub' `Map.union` Map.map (substTy sub') sub
+  where sub' = Map.singleton ty1 ty2
+
+-- | Composes two type substitutions.
+compose :: Map Type Type -> Map Type Type -> Map Type Type
+compose s1 s2 = foldr go s2 (Map.assocs s1)
+  where go (ty1, ty2) sub = extend ty1 ty2 sub
+
+-- | Infers the principal type for the given (closed) term.
+infer :: Term -> Maybe Type
+infer t = unify constraints >>= \sub -> return (substTy sub ty)
+  where (ty, constraints) = derive Map.empty t
+
+substTy :: Map Type Type -> Type -> Type
+substTy _ NatT = NatT
+substTy sub ty@(VarT _) =
+  case Map.lookup ty sub of
+    Nothing  -> ty
+    Just ty' -> ty'
+substTy sub (ty1 :->: ty2) = substTy sub ty1 :->: substTy sub ty2
