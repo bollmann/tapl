@@ -313,9 +313,10 @@ compose s1 s2 = foldr go s2 (Map.assocs s1)
 
 -- | Infers the principal type for the given (closed) term.
 infer :: Term -> Maybe Type
-infer t = unify constraints >>= \sub -> return (substTy sub ty)
+infer t = unify constraints >>= \subs -> return (substTy subs ty)
   where (ty, constraints) = derive Map.empty t
 
+-- | Substitutes a type according to a type substitution
 substTy :: Map Type Type -> Type -> Type
 substTy _ NatT = NatT
 substTy sub ty@(VarT _) =
@@ -323,3 +324,20 @@ substTy sub ty@(VarT _) =
     Nothing  -> ty
     Just ty' -> ty'
 substTy sub (ty1 :->: ty2) = substTy sub ty1 :->: substTy sub ty2
+
+-- | Substitutes a type environment according to a type substitution
+substCxt :: Map Type Type -> Context -> Context
+substCxt tySub cxt = Map.map (substTy tySub) cxt
+
+-- | Substitutes a term according to a type substitution
+substTm :: Map Type Type -> Term -> Term
+substTm _    Zero           = Zero
+substTm sub (Pred t1)      = Pred (substTm sub t1)
+substTm sub (Succ t1)      = Succ (substTm sub t1)
+substTm sub (Ifz t1 t2 t3) =
+  Ifz (substTm sub t1) (substTm sub t2) (substTm sub t3)
+substTm _   (Var x)        = Var x
+substTm sub (Lam x ty t1)  = Lam x (substTy sub ty) (substTm sub t1)
+substTm sub (App t1 t2)    = App (substTm sub t1) (substTm sub t2)
+substTm sub (Let x t1 t2)  = Let x (substTm sub t1) (substTm sub t2)
+substTm sub (Fix t1)       = Fix (substTm sub t1)

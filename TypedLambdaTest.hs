@@ -116,11 +116,12 @@ unify' = foldM go Map.empty
 
 {- Quickcheck formalization that unify' behaves like unify -}
 
+-- TODO: make the arbitrary instance sized so that it always terminates
 instance Arbitrary Type where
   -- arbitrary :: Gen Type
   arbitrary = frequency
     [ (1, return NatT)
-    , (2, (VarT . (:[])) <$> elements ['a'..'z'])
+    , (2, (VarT . (:[])) <$> elements ['A'..'Z'])
     , (3, (:->:) <$> arbitrary <*> arbitrary) ]
 
 instance Arbitrary Constraint where
@@ -150,8 +151,41 @@ inferTests = TestList
           (Let "b" (Var "double" `App` (Lam "n" NatT (Succ (Var "n")))
                                  `App` Zero)
                Zero ) ) )
-      ~?= Nothing -- requires let polymorphism, which we don't have.
+      ~?= Nothing -- requires let polymorphism, which we don't (yet) support.
   ]
+
+{- A quickcheck property asserting that 'infer' is sound wrt to 'typeof'. -}
+
+-- TODO: make the arbitrary instance sized so that it always terminates.
+instance Arbitrary Term where
+  arbitrary = frequency [ (1, Var <$> varName)
+                        , (1, Lam <$> varName <*> arbitrary <*> arbitrary)
+                        , (1, App <$> arbitrary <*> arbitrary) ]
+    where varName = fmap (:[]) (elements ['a'..'f'])
+
+makeContext :: Term -> Context
+makeContext t = Map.fromList $ zip (free t) varTys
+  where varTys = [ VarT ("X_" ++ show k) | k <- ([1..] :: [Integer]) ]
+
+prop_infer_soundness :: Term -> Bool
+prop_infer_soundness t =
+  case unify constraints of
+    Nothing  -> True
+    Just sub -> typeof (substCxt sub cxt) (substTm sub t) == Right (substTy sub ty)
+  where
+    (ty, constraints) = derive cxt t
+    cxt               = makeContext t
+
+-- TODO: finish this property: add arbitrary instance for type substitutions!
+prop_infer_completeness :: Map Type Type -> Term -> Bool
+prop_infer_completeness sub t =
+  case (typeof (substCxt sub cxt) (substTm sub t), unify constraints) of
+    (Left _, _)           -> True
+    (Right ty, Just sub') -> sub `Map.isSubmapOf` sub' && ty == substTy sub' ty'
+    _                     -> False
+  where
+    cxt = makeContext t
+    (ty', constraints) = derive cxt t
 
 return []
 main :: IO ()
