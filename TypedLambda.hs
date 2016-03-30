@@ -15,8 +15,6 @@ import qualified Data.Map as Map
 
 {- Syntax -}
 
-data Nat = Z | S Nat deriving (Eq, Show)
-
 infixr 7 :->:
 data Type
   = NatT
@@ -206,26 +204,28 @@ typeof cxt (Fix t1) = do
 {- Type Inference -}
 
 -- | Extracts all free type variables in a λ-term.
-freeTyVars :: Term -> [String]
-freeTyVars Zero           = []
-freeTyVars (Pred t1)      = nub $ freeTyVars t1
-freeTyVars (Succ t1)      = nub $ freeTyVars t1
-freeTyVars (Ifz t1 t2 t3) = nub $ concat [ freeTyVars t1
-                                         , freeTyVars t2
-                                         , freeTyVars t3 ]
-freeTyVars (Var _)        = []
-freeTyVars (Lam _ ty t1)
-  | VarT tyVar <- ty      = nub $ tyVar : freeTyVars t1
-  | otherwise             = nub $ freeTyVars t1
-freeTyVars (App t1 t2)    = nub $ freeTyVars t1 ++ freeTyVars t2
-freeTyVars (Let _ t1 t2)  = nub $ freeTyVars t1 ++ freeTyVars t2
-freeTyVars (Fix t1)       = nub $ freeTyVars t1
+termTyVars :: Term -> [String]
+termTyVars Zero           = []
+termTyVars (Pred t1)      = nub $ termTyVars t1
+termTyVars (Succ t1)      = nub $ termTyVars t1
+termTyVars (Ifz t1 t2 t3) = nub $ concat [ termTyVars t1
+                                         , termTyVars t2
+                                         , termTyVars t3 ]
+termTyVars (Var _)        = []
+termTyVars (Lam _ ty t1)  = nub $ freeTyVars ty ++ termTyVars t1
+termTyVars (App t1 t2)    = nub $ termTyVars t1 ++ termTyVars t2
+termTyVars (Let _ t1 t2)  = nub $ termTyVars t1 ++ termTyVars t2
+termTyVars (Fix t1)       = nub $ termTyVars t1
+
+-- | Extracts all type variables from a type.
+freeTyVars :: Type -> [String]
+freeTyVars (VarT tyVar)   = [tyVar]
+freeTyVars NatT           = []
+freeTyVars (ty1 :->: ty2) = freeTyVars ty1 ++ freeTyVars ty2
 
 -- | Extracts all free type variables in a typing 'Context'
-freeCxtTyVars :: Context -> [String]
-freeCxtTyVars = concatMap getTyVar . Map.elems
-  where getTyVar (VarT tyVar) = [tyVar]
-        getTyVar _            = []
+cxtTyVars :: Context -> [String]
+cxtTyVars = concatMap freeTyVars . Map.elems
 
 infixr 6 :~:
 data Constraint = Type :~: Type deriving (Eq, Show)
@@ -235,7 +235,7 @@ type ConstraintCxt a = WriterT [Constraint] (State [String]) a
 -- wrt to the given typing context.
 derive :: Context -> Term -> (Type, [Constraint])
 derive cxt t = evalState (runWriterT (deriveConTy cxt t)) usedTyVars
-  where usedTyVars = freeTyVars t ++ freeCxtTyVars cxt
+  where usedTyVars = termTyVars t ++ cxtTyVars cxt
 
 deriveConTy :: Context -> Term -> ConstraintCxt Type
 deriveConTy _ Zero = return NatT
@@ -256,6 +256,8 @@ deriveConTy cxt (Ifz t1 t2 t3) = do
 deriveConTy cxt (Var x) = do
   case Map.lookup x cxt of
     Nothing -> lift (fresh "X") >>= \ty -> return (VarT ty)
+      -- TODO: we should rather fail here instead of silently
+      -- generating a fresh variable!
     Just ty -> return ty
 deriveConTy cxt (Lam x ty t1) = do
   ty1 <- deriveConTy (Map.insert x ty cxt) t1
@@ -331,7 +333,7 @@ substCxt tySub cxt = Map.map (substTy tySub) cxt
 
 -- | Substitutes a term according to a type substitution
 substTm :: Map Type Type -> Term -> Term
-substTm _    Zero           = Zero
+substTm _   Zero           = Zero
 substTm sub (Pred t1)      = Pred (substTm sub t1)
 substTm sub (Succ t1)      = Succ (substTm sub t1)
 substTm sub (Ifz t1 t2 t3) =
