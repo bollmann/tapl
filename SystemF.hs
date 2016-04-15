@@ -4,7 +4,7 @@
 {-# OPTIONS -Wall #-}
 {-# LANGUAGE GADTs #-}
 
-module TypedLambda where
+module SystemF where
 
 import Control.Monad.Except
 import Control.Monad.State
@@ -227,7 +227,8 @@ termVars = [ TermVar $ "x_" ++ show k | k <- ([1..] :: [Integer]) ]
 typeVars :: [TypeVar]
 typeVars = [ TypeVar $ "X_" ++ show k | k <- ([1..] :: [Integer]) ]
 
--- | Generate a fresh variable name wrt to the used variables 'var'.
+-- | Generate a fresh variable name wrt to the variables used
+-- beforehand by the State monad.
 fresh :: Eq var => [var] -> State [var] var
 fresh varSupply
   = do usedVars <- get
@@ -252,9 +253,8 @@ insertVar x ty (Context st tyVs) = Context st' tyVs
   where st' = Map.insert x ty st
 
 data TypeError
-  = TypeMismatch { at      :: Term
-                 , reasons :: [(Term, Type)] }
-  | TypeNotFound { term    :: Term }
+  = TypeMismatch { at   :: Term, reasons :: [(Term, Type)] }
+  | TypeNotFound { term :: Term }
   deriving (Eq, Show)
 
 -- | Typechecks a closed term and returns its type, if any.
@@ -286,7 +286,7 @@ typeof cxt (App t1 t2) = do
   tyf <- typeof cxt t1
   tyx <- typeof cxt t2
   case (tyf, tyx) of
-    (ty1 :->: ty2, ty1') | ty1 == ty1' -> return ty2
+    (ty1 :->: ty2, ty1') | ty1 `unifiesWith` ty1' -> return ty2
     _ -> throwError $ TypeMismatch (App t1 t2) [(t1, tyf), (t2, tyx)]
 typeof cxt (Ifz t1 t2 t3) = do
   ty1 <- typeof cxt t1
@@ -303,7 +303,7 @@ typeof cxt (Let x t1 t2) = do
 typeof cxt (Fix t1) = do
   tyf <- typeof cxt t1
   case tyf of
-    (ty1 :->: ty2) | ty1 == ty2 -> return ty1
+    (ty1 :->: ty2) | ty1 `unifiesWith` ty2 -> return ty1
     _ -> throwError $ TypeMismatch (Fix t1) [(t1, tyf)]
 typeof cxt (LamT ty t1) = do
   ty1 <- typeof (cxt { tyVars = (tyVars cxt) ++ [ty] }) t1
@@ -311,6 +311,24 @@ typeof cxt (LamT ty t1) = do
 typeof cxt (AppT t1 ty) = do
   ty1 <- typeof cxt t1
   case ty1 of
-    ForallT tyVar ty2 -> return $ evalState (substTy tyVar ty ty2) usedTyVars
-    _                 -> throwError $ TypeMismatch (AppT t1 ty) [(t1, ty1)]
-  where usedTyVars = tyVar:(tyVars cxt ++ free ty)
+    ForallT tyVar ty2 -> do
+      let usedTyVars = tyVar:(tyVars cxt ++ free ty)
+      return $ evalState (substTy tyVar ty ty2) usedTyVars
+    _ -> throwError $ TypeMismatch (AppT t1 ty) [(t1, ty1)]
+
+unifiesWith :: Type -> Type -> Bool
+unifiesWith ty1 ty2 = unify ty1 ty2 Map.empty
+
+unify :: Type -> Type -> Map TypeVar TypeVar -> Bool
+unify NatT NatT _ = True
+unify (ty1 :->: ty2) (ty1' :->: ty2') sub
+  = unify ty1 ty1' sub && unify ty2 ty2' sub
+unify (VarT tyVar1) (VarT tyVar2) sub
+  | tyVar1 == tyVar2 = True
+  | otherwise        = case Map.lookup tyVar1 sub of
+      Just tyVar1' | tyVar1' == tyVar2 -> True
+      _ -> False
+unify (ForallT tyVar1 ty1) (ForallT tyVar2 ty2) sub
+  | tyVar1 == tyVar2 = True
+  | otherwise        = unify ty1 ty2 (Map.insert tyVar1 tyVar2 sub)
+unify _ _ _ = False
