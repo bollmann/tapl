@@ -166,7 +166,7 @@ ctimes = Lam m cnat. Lam n cnat $
 
 {- Church Pairs for Naturals -}
 
--- a generic definition of pairs:
+-- DIGRESSION: a generic definition of pairs:
 -- but uh, ah! we cannot instantiate it correctly without type operators!
 -- that is, these pairs are essentially useless.
 cpair :: Type
@@ -234,6 +234,9 @@ prop_times_ctimes (NonNegative m) (NonNegative n) =
     primTimes = times `App` toNatTerm m `App` toNatTerm n
     churchTimes = ctimes `App` churchNat m `App` churchNat n
       `AppT` NatT `App` succ `App` Zero
+
+-- TODO: add church encodings for lists! :-)
+
 
 {- Typechecking unit tests -}
 
