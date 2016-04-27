@@ -92,7 +92,7 @@ prd = Lam "m" $ fst `App` (Var "m" `App` ss `App` zz)
 
 
 -- from now on we'll use the following more convenient notation for
--- specyfing programs in the lambda calculus:
+-- specifying programs in the lambda calculus:
 
 λ :: String -> Term -> Term
 λ = Lam
@@ -189,7 +189,7 @@ mkSubst x s (Lam y t1)
 -- | Small-Step call-by-value reduction relation.
 reduce :: Term -> Maybe (Term)
 reduce (Var x)    = Nothing
-reduce (Lam x t') = Nothing 
+reduce (Lam x t') = Nothing
 reduce (App t1 t2)
   | (Lam x t') <- t1, value t2 = Just (subst x t2 t')
   | (Lam x t') <- t1           = App t1 <$> reduce t2
@@ -234,7 +234,7 @@ removeNames context t = evalState (remove t) context
       t1' <- remove t1
       t2' <- remove t2
       return (AppN t1' t2')
-    
+
     pushIncr x = Map.insertWith (++) x [0] . fmap (map (+1))
     popDecr  x = Map.adjust P.tail x . fmap (map (\n -> n-1))
 
